@@ -1,3 +1,4 @@
+# Snake v1.1-dev (experimental branch)
 # ===============================
 # Snake v1.0
 # Code frozen
