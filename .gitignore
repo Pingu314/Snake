@@ -1,3 +1,13 @@
-.idea/
-tools/
 highscore.txt
+dist/
+build/
+*.spec
+*.exe
+__pycache__/
+*.pyc
+.idea/
+.venv/
+v1_0/
+v1_0_1/
+v1.1/
+recovered_v1.1.py
