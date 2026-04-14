@@ -93,15 +93,26 @@ Requires Python 3.10+. No external dependencies beyond standard library.
 ## Known Issues / Status
 
 - Marked as **unstable** — some edge cases in achievement and combo systems
-- `GAME_OVER` state defined but not fully wired
 - Audio paths are relative — must be run from repo root
+
+---
+
+## Testing
+
+Unit tests live in `tests/`. Run from the repo root:
+
+```
+python -m pytest tests/ -v
+```
+
+Tests cover: movement, boundary wrap/nowrap, facing, grid snapping, GAME_OVER
+wiring, scoring, and combo decay.  No Turtle/tkinter required — runs headlessly.
 
 ---
 
 ## Roadmap
 
 - Stabilize achievement + combo edge cases
-- Wire `GAME_OVER` state fully
 - Cross-platform audio
 - Configurable grid size
 - Proper settings screen
