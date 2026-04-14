@@ -443,3 +443,20 @@ def achievement_popup_system(world):
         popup.ticks -= 1
         if popup.ticks <= 0:
             world.remove_entity(e)
+
+
+def game_over_system(world):
+    """Transition to GAME_OVER when a DEATH event is present in the world.
+
+    Called once per tick while in PLAYING state.  If any GameEvent with
+    kind == "DEATH" exists, the state machine is advanced to GAME_OVER and
+    all pending GameEvents are cleared so they don't linger into the next state.
+    """
+    events = world.get(GameEvent)
+    for e, event in list(events.items()):
+        if event.kind == "DEATH":
+            GameStateManager.set_state(Gamestate.GAME_OVER)
+            # Remove all game events so they don't bleed into the next state
+            for ev_entity in list(events.keys()):
+                world.remove_entity(ev_entity)
+            return
