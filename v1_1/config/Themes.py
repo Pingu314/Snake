@@ -125,6 +125,8 @@ class Themes:
         turtles["snake"].color(theme["snake"])
         turtles["food"].color(theme["food"])
         turtles["text"].color(theme["hud_text"])
+        if "hud" in turtles:
+            turtles["hud"].color(theme["hud_text"])
 
     @classmethod
     def get(cls,key):
