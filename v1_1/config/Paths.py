@@ -15,5 +15,5 @@ def resource_path(relative_path):
 
 BASE_DIR = get_base_dir()
 SOUNDS_DIR = BASE_DIR / "audio" / "assets" / "sounds"
-DATA_DIR = BASE_DIR
+DATA_DIR = BASE_DIR.parent
 HIGHSCORE_FILE = DATA_DIR / "highscore.txt"
