@@ -14,8 +14,6 @@ from v1_1.core.ecs.UiComponents import UILabel, UIStateTag
 
 
 
-def update(self, world):
-    pass
 
 def cache_previous_positions(world):
     positions = world.get(Position)
