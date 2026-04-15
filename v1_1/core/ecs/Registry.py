@@ -14,9 +14,6 @@ class World:
         self.entities.add(e)
         return e
 
-    def add_entity(self, entity):
-        self.entities.add(entity)
-        return entity
 
     def add_component(self, entity, component):
         self.components.setdefault(type(component), {})[entity] = component
