@@ -22,7 +22,7 @@ from v1_1.core.ecs.Components import Food, SnakeHead, Velocity, NameEntry, Combo
 from v1_1.core.ecs.Systems import collision_system, movement_system, render_system, snake_follow_system, \
     boundary_system, cache_previous_positions, snap_to_grid_system, ui_render_system, combo_glow_system, facing_system, \
     ui_fade_system, combo_decay_system, score_render_system, \
-    scoring_system, achievement_system, combo_window_system, achievement_popup_system
+    scoring_system, achievement_system, combo_window_system, achievement_popup_system, game_over_system
 from v1_1.core.ecs.UiComponents import UIStateTag, UILabel
 
 from v1_1.logic.Scoring import Scoring
@@ -123,7 +123,8 @@ def cycle_theme():
         if r.kind == "snake":
             r.color = Themes.get("snake_body")
         elif r.kind == "food":
-            r.color = Themes.get("food")
+            food_comp = world.get(Food).get(e)
+            r.color = Themes.get("food_gold" if food_comp and food_comp.golden else "food")
         elif r.kind == "obstacle":
             r.color = Themes.get("obstacle")
         elif r.kind == "overlay":
@@ -403,12 +404,10 @@ def game_tick():
             return
 
         collision_system(world)
+        game_over_system(world)
 
-        for e, event in list(world.get(GameEvent).items()):
-            if event.kind == "DEATH":
-                trigger_death()
-                world.remove_entity(e)
-                return
+        if GameStateManager.current() == Gamestate.GAME_OVER:
+            return
 
         events = world.get(GameEvent)
         for e, event in list(events.items()):
@@ -449,6 +448,10 @@ def game_tick():
         achievement_system(world)
         achievement_popup_system(world)
         score_render_system(world, score_pen)
+
+    elif state == Gamestate.GAME_OVER:
+        trigger_death()
+        return
 
     elif state == Gamestate.PAUSED:
         pass
