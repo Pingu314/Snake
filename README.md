@@ -1,6 +1,6 @@
-# Snake v1.1 — ECS Rewrite
+# Snake v1.1 - ECS Rewrite
 
-> **Status: In Development** — This branch is a ground-up rewrite of v1.0 using an Entity Component System (ECS) architecture. Not yet stable.
+> **Status: In Development** - This branch is a ground-up rewrite of v1.0 using an Entity Component System (ECS) architecture. Not yet stable.
 
 A complete architectural overhaul of the classic Snake game. Where v1.0 was a single-file script, v1.1 separates concerns into a proper module structure with a game engine foundation.
 
@@ -25,42 +25,41 @@ A complete architectural overhaul of the classic Snake game. Where v1.0 was a si
 ## Architecture
 
 ```
-Snake.py                  ← entry point / game loop
+snake.py                  ← entry point: Game class + main loop
 │
 v1_1/
 ├── audio/
-│   └── Audio.py          ← sound and music manager
+│   └── audio.py          ← sound and music manager
 ├── config/
-│   ├── Settings.py       ← difficulty presets, grid config
-│   ├── Themes.py         ← visual themes + music mapping
-│   ├── Paths.py          ← file path constants
-│   └── AchievementConfig.py
+│   ├── settings.py       ← difficulty presets, grid config
+│   ├── themes.py         ← visual themes + music mapping
+│   ├── paths.py          ← file path constants
+│   └── achievement_config.py
 ├── core/
-│   ├── Gamestate.py      ← enum state machine with enter/exit hooks
-│   ├── Persistence.py    ← highscore save/load
+│   ├── game_state.py     ← enum state machine with enter/exit hooks
+│   ├── persistence.py    ← highscore save/load
 │   └── ecs/
-│       ├── Registry.py   ← World / entity-component store
-│       ├── Entity.py     ← entity ID management
-│       ├── Components.py ← all ECS components (data only)
-│       ├── Systems.py    ← all game logic (movement, collision, render)
-│       ├── Factories.py  ← entity spawners (snake, food, UI)
-│       └── UiComponents.py
+│       ├── registry.py   ← World / entity-component store
+│       ├── components.py ← all ECS components (data only)
+│       ├── systems.py    ← all game logic (movement, collision, render)
+│       ├── factories.py  ← entity spawners (snake, food, UI)
+│       └── ui_components.py
 ├── logic/
-│   └── Scoring.py        ← combo scoring logic
+│   └── scoring.py        ← combo scoring logic
 └── util/
-    └── Input_mgr.py      ← state-based input binding manager
+    └── input_manager.py  ← state-based input binding manager
 ```
 
 ---
 
 ## ECS Pattern
 
-The game uses an **Entity Component System** — a pattern common in professional game engines:
+The game uses an **Entity Component System** - a pattern common in professional game engines:
 
-- **Entities** — just an ID (integer)
-- **Components** — pure data, no logic (`Position`, `Velocity`, `Food`, `Score` etc.)
-- **Systems** — pure logic, operate on components (`movement_system`, `collision_system`, `render_system` etc.)
-- **World/Registry** — stores all entities and their components
+- **Entities** - just an ID (integer)
+- **Components** - pure data, no logic (`Position`, `Velocity`, `Food`, `Score` etc.)
+- **Systems** - pure logic, operate on components (`movement_system`, `collision_system`, `render_system` etc.)
+- **World/Registry** - stores all entities and their components
 
 This makes each system independently testable and keeps game logic cleanly separated from rendering and data.
 
@@ -68,32 +67,30 @@ This makes each system independently testable and keeps game logic cleanly separ
 
 ## New Features
 
-- **Golden food** — rare spawns with score multipliers
-- **Combo system** — consecutive food hits within a time window build a combo
-- **Achievements** — runtime badges for things like perfect runs, long snakes, combo god
-- **Obstacles** — Hard and Insane difficulties have static obstacle layouts
-- **Themes** — multiple visual themes each with their own music track
-- **Wrap mode** — Easy/Normal wrap at borders, Hard/Insane do not
-- **Name entry** — keyboard-based initials entry on new high score
+- **Golden food** - rare spawns with score multipliers
+- **Combo system** - consecutive food hits within a time window build a combo
+- **Achievements** - runtime badges for things like perfect runs, long snakes, combo god
+- **Obstacles** - Hard and Insane difficulties have static obstacle layouts
+- **Themes** - multiple visual themes each with their own music track
+- **Wrap mode** - Easy/Normal wrap at borders, Hard/Insane do not
+- **Name entry** - keyboard-based initials entry on new high score
 
 ---
 
 ## How to Run
 
 ```bash
-python Snake.py
+pip install -r requirements.txt
+python snake.py
 ```
 
-Requires Python 3.10+. No external dependencies beyond standard library.
-
-> Sound requires Windows (`winsound`). Game runs on other platforms without audio.
+Requires Python 3.10+ and `pygame-ce` (a drop-in fork of pygame that, unlike pygame 2.6, installs on Python 3.14) for audio.
 
 ---
 
 ## Known Issues / Status
 
-- Marked as **unstable** — some edge cases in achievement and combo systems
-- Audio paths are relative — must be run from repo root
+- Marked as **unstable** - some edge cases in achievement and combo systems
 
 ---
 
@@ -106,7 +103,7 @@ python -m pytest tests/ -v
 ```
 
 Tests cover: movement, boundary wrap/nowrap, facing, grid snapping, GAME_OVER
-wiring, scoring, and combo decay.  No Turtle/tkinter required — runs headlessly.
+wiring, scoring, and combo decay.  No Turtle/tkinter required - runs headlessly.
 
 ---
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1 — in progress
+## v1.1 - in progress
 
 Complete architectural rewrite. v1.0 was a single-file script; v1.1 splits the
 game into a proper module structure built on an Entity Component System (ECS).
@@ -12,17 +12,17 @@ game into a proper module structure built on an Entity Component System (ECS).
 - State-aware Input Manager (replaces direct key bindings)
 
 ### New Features
-- Golden food — rare spawns with score multipliers
-- Combo system — consecutive hits within a time window stack a multiplier
-- Achievements — runtime badges (perfect runs, combo god, long snake, etc.)
-- Obstacles — Hard and Insane difficulties include static obstacle layouts
-- Themes — multiple visual themes, each with its own music track
+- Golden food - rare spawns with score multipliers
+- Combo system - consecutive hits within a time window stack a multiplier
+- Achievements - runtime badges (perfect runs, combo god, long snake, etc.)
+- Obstacles - Hard and Insane difficulties include static obstacle layouts
+- Themes - multiple visual themes, each with its own music track
 - Cross-platform audio manager (replaces winsound, Windows-only)
-- Wrap mode per difficulty — Easy/Normal wrap, Hard/Insane do not
+- Wrap mode per difficulty - Easy/Normal wrap, Hard/Insane do not
 
 ### Testing
 - Unit tests in tests/ covering movement, collision, scoring, combo decay
-- Headless — no Turtle/tkinter needed to run tests
+- Headless - no Turtle/tkinter needed to run tests
 
 ### Known Issues
 - Achievement and combo edge cases not fully stabilized
@@ -31,7 +31,7 @@ game into a proper module structure built on an Entity Component System (ECS).
 
 ---
 
-## v1.0 — 2026-01-11
+## v1.0 - 2026-01-11
 
 First stable release. Single-file implementation using Python's Turtle graphics.
 
