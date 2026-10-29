@@ -9,14 +9,14 @@ Run with:
 """
 
 import pytest
-from v1_1.core.ecs.Registry import World
-from v1_1.core.ecs.Components import (
+from v1_1.core.ecs.registry import World
+from v1_1.core.ecs.components import (
     Position, Velocity, SnakeHead, SnakeSegment, Collider,
     FoodTag, Food, Facing, PreviousPosition,
     GameEvent, ComboCounter, RunModifier, Score, ScoreEvent,
     Obstacle,
 )
-from v1_1.core.ecs.Systems import (
+from v1_1.core.ecs.systems import (
     movement_system,
     facing_system,
     boundary_system,
@@ -26,9 +26,9 @@ from v1_1.core.ecs.Systems import (
     scoring_system,
     combo_decay_system,
 )
-from v1_1.core.Gamestate import Gamestate, GameStateManager
-from v1_1.config.Settings import Settings
-from v1_1.logic.Scoring import Scoring
+from v1_1.core.game_state import GameState, GameStateManager
+from v1_1.config.settings import Settings
+from v1_1.logic.scoring import Scoring
 
 
 # ---------------------------------------------------------------------------
@@ -196,14 +196,14 @@ class TestSnapToGridSystem:
 class TestGameOverSystem:
 
     def setup_method(self):
-        GameStateManager.set_state(Gamestate.PLAYING)
+        GameStateManager.set_state(GameState.PLAYING)
 
     def test_death_event_triggers_game_over(self):
         world = make_world()
         e = world.create_entity()
         world.add_component(e, GameEvent("DEATH", None))
         game_over_system(world)
-        assert GameStateManager.current() == Gamestate.GAME_OVER
+        assert GameStateManager.current() == GameState.GAME_OVER
 
     def test_death_event_is_cleaned_up(self):
         world = make_world()
@@ -217,7 +217,7 @@ class TestGameOverSystem:
         e = world.create_entity()
         world.add_component(e, GameEvent("FOOD_HIT", None))
         game_over_system(world)
-        assert GameStateManager.current() == Gamestate.PLAYING
+        assert GameStateManager.current() == GameState.PLAYING
 
 
 # ---------------------------------------------------------------------------
@@ -243,13 +243,16 @@ class TestScoringSystem:
         assert len(world.get(ScoreEvent)) == 0
 
     def test_multiplier_applied(self):
+        """A perfect run on hard scores x1.25 (the multiplier comes from RunModifier)."""
         world = make_world()
+        Settings.difficulty = "hard"
         scoring = Scoring()
-        scoring.set_multiplier(2.0)
+        world.add_component(world.create_entity(), RunModifier())
         e = world.create_entity()
         world.add_component(e, ScoreEvent("FOOD", 10))
         scoring_system(world, scoring)
-        assert scoring.score == 20
+        assert scoring.score == 12   # int(10 * 1.25)
+        Settings.difficulty = "normal"
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,6 @@ class FoodTag: pass
 class SnakeTag: pass
 class SnakeHead: pass
 class Obstacle: pass
-class ScoreDisplay: pass
 
 class Position:
     def __init__(self, x, y):

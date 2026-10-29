@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 a = Analysis(
-    ['Snake.py'],
+    ['snake.py'],
     pathex=[],
     binaries=[],
     datas=[

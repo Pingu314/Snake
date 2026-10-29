@@ -1,10 +1,9 @@
 # Themes v1.1
 
 from pathlib import Path
-from v1_1.config.Paths import SOUNDS_DIR
+from v1_1.config.paths import SOUNDS_DIR
 
 class Themes:
-    _screen = None
     _themes = [{"name": "Classic",
                 "bg": "#0b1c2d",
                 "snake": "#b0b0b0",
@@ -118,8 +117,7 @@ class Themes:
         return cls.current()["name"]
 
     @classmethod
-    def apply (cls,screen,turtles):
-        cls._screen = screen
+    def apply(cls, screen, turtles):
         theme = cls.current()
         screen.bgcolor(theme["bg"])
         turtles["snake"].color(theme["snake"])
@@ -135,7 +133,3 @@ class Themes:
     @classmethod
     def music(cls) -> Path:
         return SOUNDS_DIR / "music" / cls.current()["music"]
-
-    @staticmethod
-    def tint(color, overlay):
-        return overlay if overlay else color

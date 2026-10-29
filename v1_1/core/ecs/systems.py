@@ -2,17 +2,15 @@
 
 import math
 
-from v1_1.config.AchievementConfig import COMBO_GOD_PRESETS, LENGTH_THRESHOLDS, ACHIEVEMENTS
-from v1_1.config.Settings import Settings
-from v1_1.config.Themes import Themes
-from v1_1.core.Gamestate import Gamestate, GameStateManager
-from v1_1.core.ecs.Components import Position, Collider, FoodTag, SnakeHead, SnakeSegment, \
+from v1_1.config.achievement_config import COMBO_GOD_PRESETS, LENGTH_THRESHOLDS, ACHIEVEMENTS
+from v1_1.config.settings import Settings
+from v1_1.config.themes import Themes
+from v1_1.core.game_state import GameState, GameStateManager
+from v1_1.core.ecs.components import Position, FoodTag, SnakeHead, SnakeSegment, \
     PreviousPosition, Velocity, Facing, RenderRequest, NameEntry, ComboGlow, UIFade, ComboCounter, \
     Obstacle, GameEvent, AchievementPopup, RunModifier, ScoreEvent, Score, Food
-from v1_1.core.ecs.Factories import spawn_achievement_popup
-from v1_1.core.ecs.UiComponents import UILabel, UIStateTag
-
-
+from v1_1.core.ecs.factories import spawn_achievement_popup
+from v1_1.core.ecs.ui_components import UILabel, UIStateTag
 
 
 def cache_previous_positions(world):
@@ -70,18 +68,17 @@ def facing_system(world):
 
 def collision_system(world):
     positions = world.get(Position)
-    colliders = world.get(Collider)
     foods = world.get(FoodTag)
     heads = world.get(SnakeHead)
     segments = world.get(SnakeSegment)
     obstacles = world.get(Obstacle)
+    grid = Settings.grid_size
 
     self_hit = False
     obstacle_hit = False
 
     for head in heads:
         h_pos = positions[head]
-        h_col = colliders[head]
 
         #-------Food--------
         for food_entity in foods:
@@ -90,7 +87,7 @@ def collision_system(world):
             dx = h_pos.x - f_pos.x
             dy = h_pos.y - f_pos.y
 
-            if abs(dx) < Settings.grid_size / 2 and abs(dy) < Settings.grid_size / 2:
+            if abs(dx) < grid / 2 and abs(dy) < grid / 2:
                 world.add_component(world.create_entity(),
                                     GameEvent("FOOD_HIT", food_entity))
 
@@ -104,7 +101,7 @@ def collision_system(world):
             dx = h_pos.x - s_pos.x
             dy = h_pos.y - s_pos.y
 
-            if abs(dx) < Settings.grid_size and abs(dy) < Settings.grid_size:
+            if abs(dx) < grid and abs(dy) < grid:
                 self_hit = True
                 world.add_component(world.create_entity(),
                                     GameEvent("DEATH", head))
@@ -112,12 +109,11 @@ def collision_system(world):
         #------Obstacle-----
         for obs in obstacles:
             o_pos = positions[obs]
-            o_col = colliders[obs]
 
             dx = h_pos.x - o_pos.x
             dy = h_pos.y - o_pos.y
 
-            if abs(dx) < Settings.grid_size and abs(dy) < Settings.grid_size:
+            if abs(dx) < grid and abs(dy) < grid:
                 obstacle_hit = True
                 world.add_component(world.create_entity(),
                                     GameEvent("DEATH", head))
@@ -127,9 +123,14 @@ def collision_system(world):
         for rm in world.get(RunModifier).values():
             rm.perfect = False
 
-def render_system(world, snake_pen, food_turtle, state):
-    if state not in (Gamestate.PLAYING, Gamestate.PAUSED):
+def render_system(world, pens, state):
+    """Draw the playfield. `pens` maps "snake", "food" and "overlay" to turtles."""
+    if state not in (GameState.PLAYING, GameState.PAUSED):
         return
+
+    snake_pen = pens["snake"]
+    food_turtle = pens["food"]
+    overlay_pen = pens["overlay"]
 
     renders = world.get(RenderRequest)
     positions = world.get(Position)
@@ -140,6 +141,7 @@ def render_system(world, snake_pen, food_turtle, state):
     snake_pen.clearstamps()
     snake_pen.penup()
     snake_pen.showturtle()
+    overlay_pen.clearstamps()
 
     # food pulse
     food_pulse = 1 + math.sin(GameStateManager.ticks() / 6) * 0.1
@@ -186,9 +188,8 @@ def render_system(world, snake_pen, food_turtle, state):
 
         #----------Pause Overlay-------
         elif r.kind == "overlay":
-            overlay_pen.penup()
             overlay_pen.goto(pos.x, pos.y)
-            overlay_pen.color("dim gray")
+            overlay_pen.color(r.color)
             overlay_pen.shapesize(40,30)
             overlay_pen.stamp()
             overlay_pen.shapesize(1, 1)
@@ -211,7 +212,7 @@ def ui_render_system(world, pen, state):
         pen.goto(label.x, label.y)
         pen.write(label.text, align=label.align, font=label.font)
 
-    if state == Gamestate.NAME_ENTRY:
+    if state == GameState.NAME_ENTRY:
         entries = world.get(NameEntry)
         for entry in entries.values():
             entry.blink_timer += 1
@@ -223,18 +224,19 @@ def ui_render_system(world, pen, state):
                       align="center",
                       font=("Arial", 16, "normal"))
 
-    if state == Gamestate.TITLE:
+    if state == GameState.TITLE:
         for label in labels.values():
             if label.text == "SNAKE":
                 label.y = 120 + math.sin(GameStateManager.ticks() / 10) * 6
 
     combos = world.get(ComboCounter)
-    if combos:
+    if state == GameState.PLAYING and combos:
         combo = next(iter(combos.values())).value
         if combo > 1:
             pen.goto(0, 230)
             pen.color(Themes.get("message"))
             pen.write(f"COMBO x{combo}", align="center", font=("Arial", 12, "normal"))
+            pen.color(Themes.get("hud_text"))
 
 def score_render_system(world, score_pen):
     score = next(iter(world.get(Score).values())).value
@@ -260,14 +262,15 @@ def boundary_system(world, wrap = True):
             if pos.x > max_x or pos.x < min_x or pos.y > max_y or pos.y < min_y :
                 return True
 
-    for e in world.get(Obstacle):
+    # Moving obstacles (insane) disappear once they leave the field
+    for e in list(world.get(Obstacle)):
         pos = positions[e]
         if pos.x > max_x or pos.x < min_x:
             world.remove_entity(e)
 
     return False
 
-def snap_to_grid_system(world, grid_size = 20):
+def snap_to_grid_system(world, grid_size = Settings.grid_size):
     positions = world.get(Position)
     heads = world.get(SnakeHead)
 
@@ -325,7 +328,7 @@ def combo_window_system(world):
         for rm in mods.values():
             if rm.combo_god:
                 window *= COMBO_GOD_PRESETS[Settings.difficulty]["window_mul"]
-            combo.timer = int(window * 60)
+        combo.timer = int(window * Settings.TICKS_PER_SECOND)
 
 def ui_fade_system(world, state):
     fades = world.get(UIFade)
@@ -343,33 +346,37 @@ def ui_fade_system(world, state):
         labels[e].alpha = fade.alpha
 
 def achievement_system(world):
+    """Award achievements. Must run before the tick's GameEvents are consumed,
+    because several achievements look at FOOD_HIT and DEATH events."""
     mods = world.get(RunModifier)
     combos = world.get(ComboCounter)
     segments = world.get(SnakeSegment)
     events = world.get(GameEvent)
+    foods = world.get(Food)
+    difficulty = Settings.difficulty
+
+    died = any(ev.kind == "DEATH" for ev in events.values())
+    golden_hits = [ev for ev in events.values()
+                   if ev.kind == "FOOD_HIT" and ev.entity in foods and foods[ev.entity].golden]
+    combo = next(iter(combos.values()), None)
 
     for rm in mods.values():
-        difficulty = Settings.difficulty
         # ---- COMBO GOD ----
-        if combos:
-            combo = next(iter(combos.values()))
-            preset = COMBO_GOD_PRESETS[Settings.difficulty]
+        if combo:
+            preset = COMBO_GOD_PRESETS[difficulty]
 
             if combo.value >= preset["threshold"] and not rm.combo_god:
                 rm.combo_god = True
                 spawn_achievement_popup(world, "COMBO_GOD")
 
-        # ---- DIE AT LENGTH 1 ----
-        score_cfg = ACHIEVEMENTS["TINY_DEATH"]["score"]
-        value = score_cfg.get(difficulty)
-        for _, event in events.items():
-            if event.kind == "DEATH" and len(segments) == 1 and not rm.tiny_death:
-                rm.tiny_death = True
-                if value:
-                    world.add_component(world.create_entity(),
-                                        ScoreEvent("TINY_DEATH", value))
-                    spawn_achievement_popup(world, "TINY_DEATH")
-                    break
+        # ---- DIE BEFORE EATING ANYTHING ----
+        if died and len(segments) <= Settings.START_LENGTH and not rm.tiny_death:
+            rm.tiny_death = True
+            value = ACHIEVEMENTS["TINY_DEATH"]["score"].get(difficulty)
+            if value:
+                world.add_component(world.create_entity(),
+                                    ScoreEvent("TINY_DEATH", value))
+                spawn_achievement_popup(world, "TINY_DEATH")
 
         # ---- PAUSE SPAM ----
         if len(rm.pause_ticks) >= 10 and not rm.nervous:
@@ -381,7 +388,7 @@ def achievement_system(world):
 
         #------Insane Survivor----
         if difficulty == "insane":
-            if GameStateManager.current() == Gamestate.PLAYING:
+            if GameStateManager.current() == GameState.PLAYING:
                 rm.insane_ticks += 1
                 if rm.insane_ticks >= 3600 and not rm.insane_survivor:
                     rm.insane_survivor = True
@@ -399,42 +406,29 @@ def achievement_system(world):
             spawn_achievement_popup(world, "LONG_SNAKE")
 
         #------Perfect Run-----
-        for e, event in events.items():
-            if event.kind == "DEATH" and rm.perfect and not rm.perfect_awarded:
-                rm.perfect_awarded = True
-                spawn_achievement_popup(world, "PERFECT_RUN")
+        if died and rm.perfect and not rm.perfect_awarded:
+            rm.perfect_awarded = True
+            spawn_achievement_popup(world, "PERFECT_RUN")
 
         #-------Greedy------
-        for e, event in events.items():
-            if event.kind == "FOOD_HIT":
-                food = world.get(Food).get(event.entity)
-                if not food:
-                    continue
-                if food and food.golden:
-                    rm.golden_eaten += 1
-                    if rm.golden_eaten >= 5 and not rm.greedy:
-                        rm.greedy = True
-                        world.add_component(world.create_entity(),
-                                            ScoreEvent("GREEDY",
-                                                       ACHIEVEMENTS["GREEDY"]["score"]))
-                        spawn_achievement_popup(world, "GREEDY")
+        for _ in golden_hits:
+            rm.golden_eaten += 1
+            if rm.golden_eaten >= 5 and not rm.greedy:
+                rm.greedy = True
+                world.add_component(world.create_entity(),
+                                    ScoreEvent("GREEDY",
+                                               ACHIEVEMENTS["GREEDY"]["score"]))
+                spawn_achievement_popup(world, "GREEDY")
 
         #------Lucky Bite-----
-        for e, event in events.items():
-            if event.kind == "FOOD_HIT":
-                food = world.get(Food).get(event.entity)
-                if not food or not food.golden:
-                    continue
+        # Golden food eaten with no combo running (combo is checked before this bite counts)
+        if golden_hits and combo and combo.value == 1 and not rm.lucky_bite:
+            rm.lucky_bite = True
+            world.add_component(world.create_entity(),
+                                ScoreEvent("LUCKY_BITE",
+                                           ACHIEVEMENTS["LUCKY_BITE"]["score"]))
+            spawn_achievement_popup(world, "LUCKY_BITE")
 
-                combos = world.get(ComboCounter)
-                combo = next(iter(combos.values()), None)
-                if combo and combo.value == 1 and not rm.lucky_bite:
-                    rm.lucky_bite = True
-                    world.add_component(world.create_entity(),
-                                        ScoreEvent("LUCKY_BITE",
-                                                   ACHIEVEMENTS["LUCKY_BITE"]["score"]))
-                    spawn_achievement_popup(world, "LUCKY_BITE")
-                    break
 def achievement_popup_system(world):
     popups = list(world.get(AchievementPopup).items())
     for e, popup in popups :
@@ -453,7 +447,7 @@ def game_over_system(world):
     events = world.get(GameEvent)
     for e, event in list(events.items()):
         if event.kind == "DEATH":
-            GameStateManager.set_state(Gamestate.GAME_OVER)
+            GameStateManager.set_state(GameState.GAME_OVER)
             # Remove all game events so they don't bleed into the next state
             for ev_entity in list(events.keys()):
                 world.remove_entity(ev_entity)

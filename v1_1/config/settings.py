@@ -3,6 +3,14 @@
 class Settings:
     grid_size = 20
 
+    # Playfield half-extents in pixels (window is 800x600)
+    HALF_WIDTH = 380
+    HALF_HEIGHT = 280
+
+    START_LENGTH = 3
+    HIGHSCORE_LIMIT = 5
+    TICKS_PER_SECOND = 60
+
     DEFAULT_DIFFICULTY = "normal"
     difficulty = DEFAULT_DIFFICULTY
     wrap_override = None
@@ -57,6 +65,13 @@ class Settings:
             cls.wrap_override = None
 
     @classmethod
+    def cycle_difficulty(cls, step):
+        """Move to the next (step=1) or previous (step=-1) difficulty, wrapping around."""
+        diffs = cls.difficulties()
+        i = diffs.index(cls.difficulty)
+        cls.set_difficulty(diffs[(i + step) % len(diffs)])
+
+    @classmethod
     def speed(cls):
         return cls.difficulty_config()["speed"]
 
@@ -75,23 +90,22 @@ class Settings:
 
     @classmethod
     def bounds(cls):
-        half_x = 380
-        half_y = 280
-        return -half_x, half_x, -half_y, half_y
+        return -cls.HALF_WIDTH, cls.HALF_WIDTH, -cls.HALF_HEIGHT, cls.HALF_HEIGHT
 
     @classmethod
     def grid_positions(cls):
         size = cls.grid_size
-        xs = list(range(-380, 381, size))
-        ys = list(range(-280, 281, size))
+        xs = list(range(-cls.HALF_WIDTH, cls.HALF_WIDTH + 1, size))
+        ys = list(range(-cls.HALF_HEIGHT, cls.HALF_HEIGHT + 1, size))
         return xs, ys
 
-    @staticmethod
-    def difficulty_color():
-        return {"easy": None,
-                "normal": "#FFD966",
-                "hard": "#FF6B6B",
-                "insane": "#B71C1C"}.get(Settings.difficulty)
+    @classmethod
+    def direction_offsets(cls):
+        g = cls.grid_size
+        return {"up": (0, g),
+                "down": (0, -g),
+                "left": (-g, 0),
+                "right": (g, 0)}
 
     @classmethod
     def obstacle_positions(cls):

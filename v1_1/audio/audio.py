@@ -4,11 +4,10 @@
 
 import pygame
 from pathlib import Path
-from v1_1.config.Paths import resource_path
+from v1_1.config.paths import resource_path
 
 class Audio:
     _initialized = False
-    _theme_loaded = False
     muted = False
 
     _current_theme: Path | None = None
@@ -28,7 +27,6 @@ class Audio:
     def init(cls):
         if not pygame.mixer.get_init():
             pygame.mixer.init()
-            Audio._initialized = True
 
         pygame.mixer.music.set_volume(cls._theme_volume)
         cls._initialized = True
@@ -65,12 +63,15 @@ class Audio:
         if cls._current_theme == path:
             return
 
+        cls._current_theme = path
         pygame.mixer.music.fadeout(fade_ms)
+
+        # A theme without a music file just plays silence instead of crashing
+        if not Path(path).exists():
+            return
+
         pygame.mixer.music.load(path)
         pygame.mixer.music.play(-1, fade_ms=fade_ms)
-
-        cls._current_theme = path
-        cls._theme_loaded = True
 
     @classmethod
     def resume_theme(cls):

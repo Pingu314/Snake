@@ -1,13 +1,10 @@
 #v1.1 Scoring
-from v1_1.config.AchievementConfig import ACHIEVEMENTS
-from v1_1.config.Settings import Settings
-from v1_1.core.ecs.Components import RunModifier, ScoreEvent
+from v1_1.core.ecs.components import ScoreEvent
 
 
 class Scoring:
-    def __init__(self, combo_window = None):
+    def __init__(self):
         self.score = 0
-        self.combo_window = combo_window
         self.combo = 1
         self.multiplier = 1.0
 

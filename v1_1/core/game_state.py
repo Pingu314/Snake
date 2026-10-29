@@ -1,8 +1,9 @@
 #v1.1 GameState Manager
 
-from enum import Enum,auto
+from collections import defaultdict
+from enum import Enum, auto
 
-class Gamestate(Enum):
+class GameState(Enum):
     TITLE = auto()
     PLAYING = auto()
     PAUSED = auto()
@@ -12,11 +13,12 @@ class Gamestate(Enum):
     RESTART_PROMPT = auto()
 
 class GameStateManager:
-    _current = Gamestate.TITLE
-    _previous = Gamestate.TITLE
+    _current = GameState.TITLE
+    _previous = GameState.TITLE
 
-    _on_enter = {}
-    _on_exit = {}
+    # Each state can have several hooks; they run in registration order
+    _on_enter = defaultdict(list)
+    _on_exit = defaultdict(list)
 
     _tick = 0
 
@@ -30,25 +32,30 @@ class GameStateManager:
 
     @classmethod
     def register_on_enter(cls, state, fn):
-        cls._on_enter[state] = fn
+        cls._on_enter[state].append(fn)
 
     @classmethod
     def register_on_exit(cls, state, fn):
-        cls._on_exit[state] = fn
+        cls._on_exit[state].append(fn)
+
+    @classmethod
+    def clear_hooks(cls):
+        cls._on_enter.clear()
+        cls._on_exit.clear()
 
     @classmethod
     def set_state(cls, new_state):
         if cls._current == new_state:
             return
 
-        if cls._current in cls._on_exit:
-            cls._on_exit[cls._current]()
+        for fn in cls._on_exit[cls._current]:
+            fn()
 
         cls._previous = cls._current
         cls._current = new_state
 
-        if new_state in cls._on_enter:
-            cls._on_enter[new_state]()
+        for fn in cls._on_enter[new_state]:
+            fn()
 
     @classmethod
     def tick(cls):

@@ -26,7 +26,10 @@ ACHIEVEMENTS = {"COMBO_GOD": {"title": "COMBO GOD!",
                                 "score": 400},
                 "LONG_SNAKE": { "title": "GETTING HUGE!",
                                  "sound": "achievement",
-                                 "score": 250}}
+                                 "score": 250},
+                "GREEDY": {"title": "GREEDY!",
+                            "sound": "achievement",
+                            "score": 300}}
 
 LENGTH_THRESHOLDS = {"easy": 30,
                      "normal": 40,

@@ -1,8 +1,13 @@
 #v1.1 Save/Load
 
-import hashlib, json
+import hashlib
 
 from pathlib import Path
+
+SALT = "SALT_42"
+
+def _sign(payload):
+    return hashlib.sha256((payload + SALT).encode()).hexdigest()
 
 class Persistence:
     @staticmethod
@@ -13,14 +18,14 @@ class Persistence:
         if not path.exists():
             return scores
 
-        content = path.read_text().splitlines()
+        content = path.read_text(encoding="utf-8").splitlines()
         if len(content) < 2:
             return scores
 
         payload = "\n".join(content[:-1])
         sig = content[-1]
 
-        if hashlib.sha256((payload + "SALT_42").encode()).hexdigest() != sig:
+        if _sign(payload) != sig:
             return scores
 
         for line in payload.splitlines():
@@ -42,8 +47,8 @@ class Persistence:
                 lines.append(f"{diff},{score},{name}")
 
         payload = "\n".join(lines)
-        sig = hashlib.sha256((payload + "SALT_42").encode()).hexdigest()
+        sig = _sign(payload)
 
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(payload + "\n")
             f.write(sig)
