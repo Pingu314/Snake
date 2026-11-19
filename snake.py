@@ -1,39 +1,42 @@
-# Snake v1.1
+# Snake v1.1.0 - arcade
 #< Pingu>
-# Status: unstable
 
+import math
 import string
+import tkinter
 import turtle
 
 from v1_1.audio.audio import Audio
 
-from v1_1.config.achievement_config import FOODS, COMBO_GOD_PRESETS
+from v1_1.config import layout
+from v1_1.config.achievement_config import ACHIEVEMENTS, FOODS, NERVOUS_WINDOW_SECONDS
 from v1_1.config.settings import Settings
 from v1_1.config.themes import Themes
-from v1_1.config.paths import HIGHSCORE_FILE
+from v1_1.config.paths import HIGHSCORE_FILE, ICON_FILE, PREFERENCES_FILE
 
-from v1_1.core.game_state import GameState, GameStateManager
+from v1_1.core.game_state import GameState, StateMachine
 from v1_1.core.persistence import Persistence
 
 from v1_1.core.ecs.registry import World
 from v1_1.core.ecs.factories import spawn_snake_ecs, spawn_food_ecs, grow_snake_system, spawn_title_ui, \
-    spawn_pause_ui, spawn_highscores_ui, spawn_obstacles_ecs, spawn_restart_ui
-from v1_1.core.ecs.components import Food, SnakeHead, Velocity, NameEntry, ComboGlow, ComboCounter, GameEvent, \
-    RenderRequest, RunModifier, Score, ScoreEvent
-from v1_1.core.ecs.systems import collision_system, movement_system, render_system, snake_follow_system, \
-    boundary_system, cache_previous_positions, snap_to_grid_system, ui_render_system, combo_glow_system, \
-    facing_system, ui_fade_system, combo_decay_system, score_render_system, scoring_system, achievement_system, \
-    combo_window_system, achievement_popup_system, game_over_system
-from v1_1.core.ecs.ui_components import UIStateTag, UILabel
+    spawn_pause_ui, spawn_highscores_ui, spawn_obstacles_ecs, spawn_restart_ui, spawn_settings_ui
+from v1_1.core.ecs.components import Food, SnakeHead, NameEntry, ComboGlow, ComboCounter, GameEvent, \
+    RunModifier, ScoreEvent, TurnBuffer, Countdown, SnakeSegment, AchievementPopup
+from v1_1.core.ecs.systems import collision_system, movement_system, BoardRenderer, snake_follow_system, \
+    boundary_system, cache_previous_positions, ui_render_system, combo_glow_system, \
+    combo_decay_system, score_render_system, scoring_system, achievement_system, \
+    combo_window_system, achievement_popup_system, game_over_system, combo_god, steering_system, \
+    obstacle_movement_system, countdown_system, field_frame_system
+from v1_1.core.ecs.ui_components import UIStateTag
 
-from v1_1.logic.scoring import Scoring
+from v1_1.logic.scoring import Scoring, food_points
+from v1_1.logic.settings_menu import SettingsMenu
 
 from v1_1.util.input_manager import InputManager
 
 
 WINDOW_WIDTH = 800
 WINDOW_HEIGHT = 600
-PAUSE_SPAM_WINDOW = 600   # ticks; pauses inside this window count towards NERVOUS?!
 
 SFX = {"eat": "audio/assets/sounds/game/eat1.wav",
        "golden": "audio/assets/sounds/game/golden.wav",
@@ -44,98 +47,135 @@ SFX = {"eat": "audio/assets/sounds/game/eat1.wav",
        "achievement": "audio/assets/sounds/ui/achievement.wav"}
 
 
-def make_pen(shape="classic", color=None):
-    pen = turtle.Turtle(shape=shape)
+def make_pen(shape="classic"):
+    """A hidden turtle without a trail. Colours are set while rendering."""
+    pen = turtle.Turtle(shape=shape, undobuffersize=1)    # nothing uses undo; a big buffer slows clear()
     pen.hideturtle()
     pen.penup()
-    if color:
-        pen.color(color)
     return pen
 
 
 class Game:
-    def __init__(self):
-        self.world = World()
+    """Game logic and state. setup_window() adds the turtle window, pens, sounds and keys.
 
-        #--------SCREEN SETUP--------
+    Without setup_window() the game runs headless, which is what the tests use.
+    """
+
+    def __init__(self, highscore_file=HIGHSCORE_FILE, preferences_file=PREFERENCES_FILE):
+        self.settings = Settings()
+        self.theme = Themes()
+        self.audio = Audio()
+        self.state = StateMachine()
+        self.world = World(self.settings, self.theme, self.audio, self.state)
+
+        self.scoring = Scoring()
+        self.highscore_file = highscore_file
+        self.high_scores = Persistence.load_high_scores(highscore_file,
+                                                        difficulties=Settings.difficulties(),
+                                                        limit=Settings.HIGHSCORE_LIMIT)
+        self.preferences_file = preferences_file
+        self.apply_preferences(Persistence.load_preferences(preferences_file))
+        self.menu = SettingsMenu(self.settings, self.theme, self.audio, on_theme_change=self.apply_theme)
+        self.last_run = {}      # summary for the game over screen
+        self.screen = None
+
+        self.state.register_on_enter(GameState.TITLE, self.build_title)
+        # title changes (difficulty, theme) are saved once when the title is left, not per key press
+        self.state.register_on_exit(GameState.TITLE, self.save_preferences)
+        self.state.register_on_enter(GameState.SETTINGS, self.build_settings)
+        self.state.register_on_exit(GameState.SETTINGS, self.save_preferences)
+        self.state.register_on_enter(GameState.PAUSED, lambda: spawn_pause_ui(self.world))
+        self.state.register_on_exit(GameState.PAUSED, lambda: self._remove_ui_for(GameState.PAUSED))
+        self.state.register_on_enter(GameState.RESTART_PROMPT, lambda: spawn_restart_ui(self.world, **self.last_run))
+        # 3-2-1 at the start of a run and after every pause
+        self.state.register_on_enter(GameState.PLAYING, self.start_countdown)
+
+    #----------PREFERENCES---------
+    def preferences(self):
+        return {"difficulty": self.settings.difficulty,
+                "walls": Settings.WALL_MODES[self.settings.wrap_override],
+                "theme": self.theme.current_name(),
+                "music_volume": self.audio.music_volume,
+                "sfx_volume": self.audio.sfx_volume,
+                "muted": self.audio.muted}
+
+    def apply_preferences(self, prefs):
+        """Apply saved preferences; unknown or broken values keep their defaults."""
+        def text(key):
+            value = prefs.get(key)
+            return value if isinstance(value, str) else None
+
+        self.settings.set_difficulty(text("difficulty"))
+        for mode, name in Settings.WALL_MODES.items():
+            if text("walls") == name:
+                self.settings.wrap_override = mode
+        if text("theme"):
+            self.theme.set_by_name(text("theme"))
+        for key, setter in (("music_volume", self.audio.set_music_volume),
+                            ("sfx_volume", self.audio.set_sfx_volume)):
+            value = prefs.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+                setter(value)
+        if isinstance(prefs.get("muted"), bool):
+            self.audio.muted = prefs["muted"]
+
+    def save_preferences(self):
+        try:
+            Persistence.save_preferences(self.preferences_file, self.preferences())
+        except OSError:
+            pass    # read-only folder: settings only last for this session
+
+    #----------WINDOW---------
+    def setup_window(self):
         self.screen = turtle.Screen()
         self.screen.setup(width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
-        self.screen.bgcolor(Themes.get("bg"))
+        self.screen.bgcolor(self.theme.get("bg"))
         self.screen.title("Snake")
         self.screen.tracer(0)
         self.screen.listen()
 
+        root = self.screen.getcanvas().winfo_toplevel()
+        try:
+            root.iconbitmap(str(ICON_FILE))
+        except tkinter.TclError:
+            pass    # no .ico support on this platform, keep the default icon
+
         #--------TURTLES(PENS)-------
-        self.snake_pen = make_pen("square", Themes.get("snake"))
-        self.food_turtle = make_pen("circle")
-        self.score_pen = make_pen(color=Themes.get("hud_text"))
-        self.ui_pen = make_pen(color=Themes.get("hud_text"))
-        self.overlay_pen = make_pen("square")
-        self.pens = {"snake": self.snake_pen,
-                     "food": self.food_turtle,
-                     "overlay": self.overlay_pen}
+        self.score_pen = make_pen()
+        self.ui_pen = make_pen()
+        self.frame_pen = make_pen()
+        self.renderer = BoardRenderer({"snake": make_pen("square"),
+                                       "food": make_pen("circle"),
+                                       "overlay": make_pen("square")}, self.screen.getcanvas())
 
         #---------AUDIO-----------
-        Audio.init()
+        self.audio.init()
         for name, path in SFX.items():
-            Audio.load_sfx(name, path)
-        Audio.play_theme(Themes.music())
+            self.audio.load_sfx(name, path)
+        self.audio.play_theme(self.theme.music(), self.theme.music_gain())
 
-        #----------GAME DATA---------
-        self.scoring = Scoring()
-        self.high_scores = Persistence.load_high_scores(HIGHSCORE_FILE,
-                                                        difficulties=Settings.difficulties(),
-                                                        limit=Settings.HIGHSCORE_LIMIT)
+        #---------INPUT-----------
         self.input = InputManager(self.screen)
+        self.screen.getcanvas().bind("<FocusOut>", self.on_focus_out)
+        self.register_view_hooks()
 
-        canvas = self.screen.getcanvas()
-        canvas.bind("<FocusOut>", self.on_focus_out)
-        canvas.bind("<FocusIn>", lambda _: Audio.resume_theme())
-
-        self._register_state_hooks()
-
-    #----------STATE HOOKS---------
-    def _register_state_hooks(self):
-        GameStateManager.register_on_enter(GameState.TITLE, self.on_enter_title)
-        GameStateManager.register_on_enter(GameState.PAUSED, self.on_enter_pause)
-        GameStateManager.register_on_exit(GameState.PAUSED, self.on_exit_pause)
-        GameStateManager.register_on_enter(GameState.RESTART_PROMPT, self.on_enter_restart)
-
-        # Every state swaps in its own key bindings when entered
+    def register_view_hooks(self):
+        """State hooks that need the window: clearing pens, drawing the frame, key bindings."""
+        self.state.register_on_enter(GameState.TITLE, self.clear_pens)
+        # the frame goes under everything else that is drawn during the run
+        self.state.register_on_enter(GameState.PLAYING, lambda: field_frame_system(self.world, self.frame_pen))
         for state in GameState:
-            GameStateManager.register_on_enter(state, lambda s=state: self.bind_inputs_for_state(s))
+            self.state.register_on_enter(state, lambda s=state: self.bind_inputs_for_state(s))
 
-    def on_enter_title(self):
-        self.world.clear()
-
-        self.snake_pen.clear()
-        self.snake_pen.clearstamps()
-        self.snake_pen.hideturtle()
-        self.food_turtle.clear()
-        self.food_turtle.hideturtle()
+    def clear_pens(self):
+        self.renderer.reset()
         self.score_pen.clear()
         self.ui_pen.clear()
-
-        spawn_title_ui(self.world, Settings.difficulty)
-        self.screen.update()
-
-    def on_enter_pause(self):
-        spawn_pause_ui(self.world)
-
-    def on_exit_pause(self):
-        self._remove_ui_for(GameState.PAUSED)
-
-    def on_enter_restart(self):
-        spawn_restart_ui(self.world)
+        self.frame_pen.clear()
 
     def on_focus_out(self, _=None):
-        if GameStateManager.current() == GameState.PLAYING:
-            GameStateManager.set_state(GameState.PAUSED)
-
-    def _remove_ui_for(self, state):
-        for e, tag in list(self.world.get(UIStateTag).items()):
-            if tag.state == state:
-                self.world.remove_entity(e)
+        if self.state.current == GameState.PLAYING:
+            self.state.set_state(GameState.PAUSED)
 
     #----------INPUT---------
     def bind_inputs_for_state(self, state):
@@ -143,19 +183,29 @@ class Game:
             GameState.TITLE: {"Left": lambda: self.change_title_difficulty(-1),
                               "Right": lambda: self.change_title_difficulty(1),
                               "space": self.start_game,
-                              "m": Audio.toggle_mute,
+                              "m": self.toggle_mute,
                               "t": self.cycle_theme,
+                              "s": self.open_settings,
                               "q": self.quit_game,
                               "h": self.show_highscores},
-            GameState.PLAYING: {"Up": lambda: self.turn(0, 1),
-                                "Down": lambda: self.turn(0, -1),
-                                "Left": lambda: self.turn(-1, 0),
-                                "Right": lambda: self.turn(1, 0),
+            GameState.SETTINGS: {"Up": lambda: self.settings_move(-1),
+                                 "Down": lambda: self.settings_move(1),
+                                 "Left": lambda: self.settings_change(-1),
+                                 "Right": lambda: self.settings_change(1),
+                                 "m": self.toggle_mute,
+                                 "b": self.back_to_title,
+                                 "Escape": self.back_to_title},
+            GameState.PLAYING: {"Up": lambda: self.turn("up"),
+                                "Down": lambda: self.turn("down"),
+                                "Left": lambda: self.turn("left"),
+                                "Right": lambda: self.turn("right"),
                                 "p": self.toggle_pause,
-                                "m": Audio.toggle_mute,
+                                "Escape": self.toggle_pause,
+                                "m": self.toggle_mute,
                                 "q": self.quit_game},
             GameState.PAUSED: {"p": self.toggle_pause,
-                               "m": Audio.toggle_mute,
+                               "Escape": self.toggle_pause,
+                               "m": self.toggle_mute,
                                "q": self.quit_game},
             GameState.NAME_ENTRY: {**{c: lambda ch=c: self.name_entry_add_char(ch)
                                       for c in string.ascii_lowercase},
@@ -164,8 +214,9 @@ class Game:
             GameState.HIGHSCORES: {"Left": lambda: self.change_highscore_difficulty(-1),
                                    "Right": lambda: self.change_highscore_difficulty(1),
                                    "b": self.back_to_title,
-                                   "m": Audio.toggle_mute},
+                                   "m": self.toggle_mute},
             GameState.RESTART_PROMPT: {"r": self.start_game,
+                                       "b": self.back_to_title,
                                        "q": self.quit_game},
         }
 
@@ -174,121 +225,183 @@ class Game:
             self.input.bind(key, fn)
         self.input.apply()
 
-    def turn(self, x, y):
-        """Steer the snake; (x, y) is a unit direction. Reversing into itself is ignored."""
-        dx, dy = x * Settings.grid_size, y * Settings.grid_size
-        velocities = self.world.get(Velocity)
+    def turn(self, direction):
+        """Queue a turn ("up", "down", "left", "right"). steering_system applies one per tick,
+        so two quick presses (e.g. Up, Left) become two moves instead of a U-turn into the neck."""
+        turn = self.settings.direction_offsets()[direction]
 
-        for e in self.world.get(SnakeHead):
-            vel = velocities[e]
-            if (dx != 0 and vel.dx == -dx) or (dy != 0 and vel.dy == -dy):
+        for buffer in self.world.get(TurnBuffer).values():
+            if buffer.turns and buffer.turns[-1] == turn:
                 continue
-            vel.dx = dx
-            vel.dy = dy
+            if len(buffer.turns) < Settings.MAX_QUEUED_TURNS:
+                buffer.turns.append(turn)
 
     #----------NAME ENTRY---------
     def name_entry_add_char(self, ch):
+        """Arcade style: the third initial saves the score right away."""
         for entry in self.world.get(NameEntry).values():
             if len(entry.text) < entry.max_len:
                 entry.text += ch.upper()
+            if len(entry.text) == entry.max_len:
+                self.name_entry_submit()
+                return
 
     def name_entry_backspace(self):
         for entry in self.world.get(NameEntry).values():
             entry.text = entry.text[:-1]
 
     def name_entry_submit(self):
-        scores = self.high_scores[Settings.difficulty]
-        for entry in self.world.get(NameEntry).values():
-            scores.append((self.scoring.score, entry.text or "PLAYER"))
+        scores = self.high_scores[self.settings.difficulty]
+        for e, entry in list(self.world.get(NameEntry).items()):
+            scores.append((self.scoring.score, entry.text or "AAA"))
+            self.world.remove_entity(e)         # saved once, never twice
 
         scores.sort(key=lambda x: x[0], reverse=True)
         del scores[Settings.HIGHSCORE_LIMIT:]
-        Persistence.save_high_scores(HIGHSCORE_FILE, self.high_scores)
-        GameStateManager.set_state(GameState.RESTART_PROMPT)
+        try:
+            Persistence.save_high_scores(self.highscore_file, self.high_scores)
+        except OSError:
+            pass    # read-only folder (e.g. Program Files): keep the scores for this session only
+        self.state.set_state(GameState.RESTART_PROMPT)
+
+    def is_highscore(self, score):
+        scores = self.high_scores[self.settings.difficulty]
+        if score <= 0 or not self.settings.is_ranked():
+            return False
+        return len(scores) < Settings.HIGHSCORE_LIMIT or score > scores[-1][0]
 
     #----------MENUS---------
+    def build_title(self):
+        self.settings.speed_bonus = 0
+        self.world.clear()
+        spawn_title_ui(self.world)
+
+    def best_score(self):
+        scores = self.high_scores[self.settings.difficulty]
+        return scores[0][0] if scores else 0
+
     def change_title_difficulty(self, step):
-        Settings.cycle_difficulty(step)
-        self.on_enter_title()
+        self.settings.cycle_difficulty(step)
+        self.build_title()
 
     def show_highscores(self):
         self.world.clear()
-        spawn_highscores_ui(self.world, Settings.difficulty, self.high_scores[Settings.difficulty])
-        GameStateManager.set_state(GameState.HIGHSCORES)
+        spawn_highscores_ui(self.world, self.high_scores[self.settings.difficulty])
+        self.state.set_state(GameState.HIGHSCORES)
 
     def change_highscore_difficulty(self, step):
-        Settings.cycle_difficulty(step)
+        self.settings.cycle_difficulty(step)
         self.show_highscores()
 
     def back_to_title(self):
-        GameStateManager.set_state(GameState.TITLE)
+        self.state.set_state(GameState.TITLE)
 
     def cycle_theme(self):
-        Themes.next()
-        for label in self.world.get(UILabel).values():
-            if label.text.startswith("Theme:"):
-                label.text = f"Theme: {Themes.current_name()}"
+        self.theme.next()
+        self.apply_theme()
+        self.build_title()
 
-        Themes.apply(self.screen, {"snake": self.snake_pen,
-                                   "food": self.food_turtle,
-                                   "text": self.ui_pen,
-                                   "hud": self.score_pen})
+    def toggle_mute(self):
+        self.audio.toggle_mute()
+        self.save_preferences()
 
-        foods = self.world.get(Food)
-        for e, r in self.world.get(RenderRequest).items():
-            if r.kind == "snake":
-                r.color = Themes.get("snake_body")
-            elif r.kind == "food":
-                food = foods.get(e)
-                r.color = Themes.get("food_gold" if food and food.golden else "food")
-            elif r.kind == "obstacle":
-                r.color = Themes.get("obstacle")
+    #----------SETTINGS SCREEN---------
+    def open_settings(self):
+        self.menu.selected = 0
+        self.state.set_state(GameState.SETTINGS)
 
-        Audio.play_theme(Themes.music())
+    def build_settings(self):
+        self.world.clear()
+        spawn_settings_ui(self.world, self.menu.entries(), self.menu.selected)
+
+    def settings_move(self, step):
+        self.menu.move(step)
+        self.build_settings()
+
+    def settings_change(self, step):
+        self.menu.change(step)
+        self.build_settings()
+
+    def apply_theme(self):
+        """Push the current theme to the window and the music (entities look their colours up while drawing)."""
+        if self.screen:
+            self.screen.bgcolor(self.theme.get("bg"))
+        self.audio.play_theme(self.theme.music(), self.theme.music_gain())
 
     def quit_game(self):
+        self.save_preferences()
         self.screen.bye()
 
     #----------GAME FLOW---------
     def toggle_pause(self):
-        state = GameStateManager.current()
-        if state == GameState.PLAYING:
-            now = GameStateManager.ticks()
+        if self.state.current == GameState.PLAYING:
+            now = self.state.ms
             for rm in self.world.get(RunModifier).values():
-                rm.pause_ticks.append(now)
-                rm.pause_ticks = [t for t in rm.pause_ticks if now - t <= PAUSE_SPAM_WINDOW]
-            Audio.play("pause")
-            GameStateManager.set_state(GameState.PAUSED)
-        elif state == GameState.PAUSED:
-            Audio.play("resume")
-            GameStateManager.set_state(GameState.PLAYING)
+                rm.perfect = False
+                rm.pause_times = [t for t in rm.pause_times if now - t <= NERVOUS_WINDOW_SECONDS * 1000] + [now]
+            self.audio.play("pause")
+            self.state.set_state(GameState.PAUSED)
+        elif self.state.current == GameState.PAUSED:
+            self.audio.play("resume")
+            self.state.set_state(GameState.PLAYING)
 
     def start_game(self):
         self.reset_game()
-        GameStateManager.set_state(GameState.PLAYING)
+        self.state.set_state(GameState.PLAYING)
+
+    def start_countdown(self):
+        step = round(layout.COUNTDOWN_STEP_SECONDS * 1000)
+        for e in list(self.world.get(Countdown)):
+            self.world.remove_entity(e)
+        self.world.add_component(self.world.create_entity(), Countdown(3 * step, step))
 
     def reset_game(self):
         world = self.world
         world.clear()
         self.scoring.reset()
-        self.score_pen.clear()
+        self.settings.speed_bonus = 0
 
         world.add_component(world.create_entity(), ComboCounter())
-        world.add_component(world.create_entity(), Score())
 
-        g = Settings.grid_size
+        g = self.settings.grid_size
         start = [(g * i, 0) for i in reversed(range(Settings.START_LENGTH))]
-        spawn_snake_ecs(world, start, "right", Settings.direction_offsets())
+        spawn_snake_ecs(world, start, "right")
 
-        spawn_food_ecs(world, Settings.grid_positions(), Settings.golden_chance())
-        spawn_obstacles_ecs(world, Settings.obstacle_positions())
+        spawn_obstacles_ecs(world)
+        spawn_food_ecs(world)               # after the obstacles: food never lands in a block
         world.add_component(world.create_entity(), RunModifier())
 
     def trigger_death(self):
-        Audio.play("death")
-        self._remove_ui_for(GameState.PLAYING)
-        self.world.add_component(self.world.create_entity(), NameEntry())
-        GameStateManager.set_state(GameState.NAME_ENTRY)
+        self.audio.play("death")
+
+        score = self.scoring.score
+        earned = set().union(*(rm.earned for rm in self.world.get(RunModifier).values()))
+        self.last_run = {"score": score,
+                         "length": len(self.world.get(SnakeSegment)),
+                         "earned": [a for a in ACHIEVEMENTS if a in earned],
+                         "new_best": self.settings.is_ranked() and score > self.best_score()}
+
+        if self.is_highscore(score):
+            self.audio.play("highscore")
+            self.world.add_component(self.world.create_entity(), NameEntry())
+            next_state = GameState.NAME_ENTRY
+        else:
+            next_state = GameState.RESTART_PROMPT
+
+        # Popups of achievements earned by dying stay up during name entry;
+        # the game over screen lists them anyway
+        for e in list(self.world.get(AchievementPopup)):
+            if next_state == GameState.NAME_ENTRY:
+                self.world.get(UIStateTag)[e].state = next_state
+            else:
+                self.world.remove_entity(e)
+
+        self.state.set_state(next_state)
+
+    def _remove_ui_for(self, state):
+        for e, tag in list(self.world.get(UIStateTag).items()):
+            if tag.state == state:
+                self.world.remove_entity(e)
 
     def handle_food_hits(self):
         world = self.world
@@ -300,70 +413,81 @@ class Game:
             food = world.get(Food).get(event.entity)
             if not food:
                 continue
-            Audio.play("golden" if food.golden else "eat")
+            self.audio.play("golden" if food.golden else "eat")
+            self.settings.speed_up()        # like v1.0: every food makes the snake a bit faster
 
-            value = FOODS["golden"] if food.golden else FOODS["normal"]
-            if food.golden and any(rm.combo_god for rm in world.get(RunModifier).values()):
-                value = int(value * (1 + COMBO_GOD_PRESETS[Settings.difficulty]["gold_bonus"]))
-            world.add_component(world.create_entity(), ScoreEvent("FOOD", value))
-
+            # A bite inside the combo window extends the combo, otherwise a new one starts
+            combo_value = 1
             for combo in world.get(ComboCounter).values():
-                combo.value += 1
-                self.scoring.set_combo(combo.value)
+                combo.value = combo.value + 1 if combo.timer > 0 else 1
+                combo_value = combo.value
             combo_window_system(world)
 
+            base = FOODS["golden"] if food.golden else FOODS["normal"]
+            god = combo_god(world)
+            if food.golden and god:
+                base = int(base * (1 + god["gold_bonus"]))
+            world.add_component(world.create_entity(), ScoreEvent(food_points(base, combo_value)))
+
             for head in world.get(SnakeHead):
-                world.add_component(head, ComboGlow(8))
+                world.add_component(head, ComboGlow(layout.COMBO_GLOW_SECONDS * 1000))
 
             world.remove_entity(event.entity)
             grow_snake_system(world)
-            spawn_food_ecs(world, Settings.grid_positions(), Settings.golden_chance())
+            if spawn_food_ecs(world) is None:
+                # No free tile left: the board is full, the run is over
+                world.add_component(world.create_entity(), GameEvent("BOARD_FULL"))
 
     #----------MAIN LOOP---------
     def update_playing(self):
+        """One tick of game logic. Draws nothing, so it also runs headless."""
         world = self.world
+        steering_system(world)
         cache_previous_positions(world)
-        facing_system(world)
         movement_system(world)
         snake_follow_system(world)
-        snap_to_grid_system(world)
         combo_glow_system(world)
         combo_decay_system(world)
 
-        if boundary_system(world, wrap=Settings.get_wrap_mode()):
+        if boundary_system(world):
             for head in world.get(SnakeHead):
-                world.add_component(world.create_entity(), GameEvent("DEATH", head))
+                world.add_component(world.create_entity(), GameEvent("DEATH"))
 
         collision_system(world)
+        # Blocks move after the collision check and bounce off the snake, so they never pass through it
+        obstacle_movement_system(world)
         # Achievements read this tick's FOOD_HIT / DEATH events, so they run first
-        achievement_system(world)
+        achievement_system(world, self.scoring.score)
         self.handle_food_hits()
 
         scoring_system(world, self.scoring)
         achievement_popup_system(world)
-        score_render_system(world, self.score_pen)
 
-        game_over_system(world)
-        if GameStateManager.current() == GameState.GAME_OVER:
+        if game_over_system(world):
             self.trigger_death()
 
-    def tick(self):
-        GameStateManager.tick()
-
-        if GameStateManager.current() == GameState.PLAYING:
-            self.update_playing()
-
-        state = GameStateManager.current()
-        render_system(self.world, self.pens, state)
-        ui_fade_system(self.world, state)
-        ui_render_system(self.world, self.ui_pen, state)
+    def render(self):
+        self.renderer.draw(self.world)
+        # Keep the score up after death too, so points earned by dying (e.g. TINY_DEATH) show up
+        if self.state.current in (GameState.PLAYING, GameState.NAME_ENTRY, GameState.RESTART_PROMPT):
+            score_render_system(self.world, self.score_pen, self.scoring.score, self.best_score())
+        ui_render_system(self.world, self.ui_pen)
         self.screen.update()
 
+    def tick(self):
+        self.state.tick(self.settings.speed())
+
+        # the snake waits while the 3-2-1 runs
+        if self.state.current == GameState.PLAYING and not countdown_system(self.world):
+            self.update_playing()
+
+        self.render()
         # Always schedule the next frame, whatever state we ended up in
-        self.screen.ontimer(self.tick, Settings.speed())
+        self.screen.ontimer(self.tick, self.settings.speed())
 
     def run(self):
-        self.on_enter_title()
+        self.setup_window()
+        self.build_title()
         self.bind_inputs_for_state(GameState.TITLE)
         self.tick()
         self.screen.mainloop()

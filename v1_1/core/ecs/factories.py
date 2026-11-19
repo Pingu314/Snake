@@ -2,121 +2,118 @@
 
 import random
 
-from v1_1.config.achievement_config import ACHIEVEMENTS
-from v1_1.audio.audio import Audio
-from v1_1.config.themes import Themes
-from v1_1.config.settings import Settings
-from v1_1.core.ecs.components import Position, Collider, SnakeSegment, SnakeHead, SnakeTag, Food, FoodTag, Velocity, \
-    RenderRequest, UIFade, Obstacle, AchievementPopup
+from v1_1.config import layout
+from v1_1.config.achievement_config import ACHIEVEMENTS, POPUP_SECONDS
+from v1_1.core.ecs.components import Position, SnakeSegment, SnakeHead, Food, Velocity, \
+    RenderRequest, Obstacle, AchievementPopup, TurnBuffer, ObstacleMover
 from v1_1.core.game_state import GameState
 from v1_1.core.ecs.ui_components import UILabel, UIStateTag
 
 
+def spawn_label(world, state, text, x, y, font=layout.FONT_TEXT, align="center", color=None):
+    e = world.create_entity()
+    world.add_component(e, UILabel(text, x, y, align=align, font=font, color=color))
+    world.add_component(e, UIStateTag(state))
+    return e
+
 def spawn_pause_ui(world):
     bg = world.create_entity()
     world.add_component(bg, Position(0,0))
-    world.add_component(bg, RenderRequest(shape="square",
-                                          color= "dim gray",
-                                          kind="overlay"))
+    world.add_component(bg, RenderRequest(color_key=None, kind="overlay"))
     world.add_component(bg, UIStateTag(GameState.PAUSED))
 
-    e = world.create_entity()
-    world.add_component(e, UILabel("Pause",0,0, font=("Arial",32,"bold")))
-    world.add_component(e, UIStateTag(GameState.PAUSED))
-    world.add_component(e, UIFade())
+    spawn_label(world, GameState.PAUSED, "Pause", 0, layout.PAUSE_Y, layout.FONT_TITLE)
+    spawn_label(world, GameState.PAUSED, "Press P or Esc to Resume", 0, layout.PAUSE_HINT_Y, layout.FONT_SMALL)
 
-    e2 = world.create_entity()
-    world.add_component(e2, UILabel("Press P to Resume", 0,-60, font=("Arial",12,"normal")))
-    world.add_component(e2, UIStateTag(GameState.PAUSED))
-    world.add_component(e2, UIFade())
-
-def spawn_title_ui(world, difficulty):
-    e = world.create_entity()
-    world.add_component(e, UILabel("SNAKE", 0, 120, font=("Arial",32,"bold")))
-    world.add_component(e, UIStateTag(GameState.TITLE))
-
-    e2 = world.create_entity()
-    world.add_component(e2, UILabel(f"Difficulty: {difficulty}",0,60))
-    world.add_component(e2, UIStateTag(GameState.TITLE))
-
-    e3 = world.create_entity()
-    world.add_component(e3, UILabel(f"Theme: {Themes.current_name()}",0,-40))
-    world.add_component(e3, UIStateTag(GameState.TITLE))
+def spawn_title_ui(world):
+    state = GameState.TITLE
+    spawn_label(world, state, "SNAKE", 0, layout.TITLE_Y, layout.FONT_TITLE)
+    spawn_label(world, state, f"Difficulty: {world.settings.difficulty}", 0, layout.DIFFICULTY_Y)
+    spawn_label(world, state, f"Theme: {world.theme.current_name()}", 0, layout.THEME_Y)
+    if not world.settings.is_ranked():
+        spawn_label(world, state, "UNRANKED (custom walls)", 0, layout.UNRANKED_Y, layout.FONT_SMALL, color="message")
 
     controls = [
         "SPACE – Start Game",
-        "← / → – Change Difficulty",
-        "Arrow Keys – Movement in Game",
-        "T – Change Theme (only on Title)",
-        "M – Mute",
-        "P – Pause (in Game)",
-        "H - Highscore",
-        "Q – Quit",
-        "R – Restart(when dead)"]
+        "← / → – Difficulty     T – Theme",
+        "S – Settings     H – Highscores",
+        "Arrow Keys – Move     P / Esc – Pause",
+        "M – Mute     Q – Quit",
+        "R – Restart / B – Title (when dead)"]
 
-    y = -80
+    y = layout.CONTROLS_Y
     for line in controls:
-        e = world.create_entity()
-        world.add_component(e, UILabel(line, 0, y, font=("Arial", 12, "normal")))
-        world.add_component(e, UIStateTag(GameState.TITLE))
-        y -= 22
+        spawn_label(world, state, line, 0, y, layout.FONT_SMALL)
+        y -= layout.CONTROLS_STEP
 
-def spawn_highscores_ui(world, difficulty, scores):
-    title = world.create_entity()
-    world.add_component(title, UILabel(f"HIGHSCORES - {difficulty.upper()}",0,160,
-                                       font = ("Arial", 24, "bold")))
-    world.add_component(title, UIStateTag(GameState.HIGHSCORES))
+def spawn_highscores_ui(world, scores):
+    state = GameState.HIGHSCORES
+    spawn_label(world, state, f"HIGHSCORES - {world.settings.difficulty.upper()}", 0,
+                layout.HIGHSCORES_TITLE_Y, layout.FONT_HEADING)
 
-    y = 100
-    for i, (score,name) in enumerate(scores):
-        e = world.create_entity()
-        world.add_component(e, UILabel(
-            f"{i+1}. {name} {score}",0,y ))
-        world.add_component(e, UIStateTag(GameState.HIGHSCORES))
-        y -= 30
+    y = layout.HIGHSCORES_FIRST_Y
+    for i, (score, name) in enumerate(scores):
+        spawn_label(world, state, f"{i+1}. {name} {score}", 0, y)
+        y -= layout.HIGHSCORES_STEP
 
-    hint = world.create_entity()
-    world.add_component(hint, UILabel("← / → Change Difficulty   B – Back", 0, -180, font=("Arial", 12, "normal")))
-    world.add_component(hint, UIStateTag(GameState.HIGHSCORES))
+    spawn_label(world, state, "← / → Change Difficulty   B – Back", 0, layout.HIGHSCORES_HINT_Y, layout.FONT_SMALL)
 
-def spawn_restart_ui(world):
-    e = world.create_entity()
-    world.add_component(e, UILabel("GAME OVER", 0,60, font=("Arial",28,"bold")))
-    world.add_component(e, UIStateTag(GameState.RESTART_PROMPT))
+def spawn_settings_ui(world, entries, selected):
+    """entries: [(label, value text), ...]; the selected row is highlighted and shows ◄ ►."""
+    state = GameState.SETTINGS
+    spawn_label(world, state, "SETTINGS", 0, layout.SETTINGS_TITLE_Y, layout.FONT_HEADING)
 
-    e2 = world.create_entity()
-    world.add_component(e2, UILabel("Press R to Restart", 0,-20))
-    world.add_component(e2, UIStateTag(GameState.RESTART_PROMPT))
+    y = layout.SETTINGS_FIRST_Y
+    for i, (label, value) in enumerate(entries):
+        active = i == selected
+        color = "message" if active else None
+        spawn_label(world, state, ("► " if active else "   ") + label, layout.SETTINGS_LABEL_X, y,
+                    align="left", color=color)
+        spawn_label(world, state, f"◄ {value} ►" if active else value, layout.SETTINGS_VALUE_X, y,
+                    align="right", color=color)
+        y -= layout.SETTINGS_STEP
 
-    e3 = world.create_entity()
-    world.add_component(e3, UILabel("Q - Quit", 0,-60))
-    world.add_component(e3, UIStateTag(GameState.RESTART_PROMPT))
+    spawn_label(world, state, "↑ / ↓ Select     ← / → Change     B – Back", 0, layout.SETTINGS_HINT_Y,
+                layout.FONT_SMALL)
 
-def spawn_snake_ecs(world, positions, direction, offsets):
-    dx, dy = offsets[direction]
+def spawn_restart_ui(world, score=0, length=0, earned=(), new_best=False):
+    """GAME OVER with the run's summary: score, length and the achievements earned this run."""
+    state = GameState.RESTART_PROMPT
+    spawn_label(world, state, "GAME OVER", 0, layout.GAME_OVER_Y, layout.FONT_GAME_OVER)
+    spawn_label(world, state, f"Score {score}     Length {length}" + ("     NEW BEST!" if new_best else ""),
+                0, layout.GAME_OVER_STATS_Y, color="message" if new_best else None)
+
+    max_rows = (layout.GAME_OVER_LIST_Y - layout.GAME_OVER_FIRST_HINT_Y) // layout.GAME_OVER_LIST_STEP - 1
+    titles = [ACHIEVEMENTS[a]["title"] for a in earned]
+    if len(titles) > max_rows:
+        titles = titles[:max_rows - 1] + [f"+ {len(titles) - max_rows + 1} more"]
+    y = layout.GAME_OVER_LIST_Y
+    for title in titles:
+        spawn_label(world, state, title, 0, y, layout.FONT_SMALL, color="message")
+        y -= layout.GAME_OVER_LIST_STEP
+
+    y = layout.GAME_OVER_FIRST_HINT_Y
+    for hint in ("Press R to Restart", "B - Back to Title", "Q - Quit"):
+        spawn_label(world, state, hint, 0, y)
+        y -= layout.GAME_OVER_HINT_STEP
+
+def spawn_snake_ecs(world, positions, direction):
+    dx, dy = world.settings.direction_offsets()[direction]
     entities = []
 
     for i, (x, y) in enumerate(positions):
         e = world.create_entity()
 
         world.add_component(e, Position(x, y))
-        world.add_component(e, SnakeTag())
         world.add_component(e, SnakeSegment(i))
-        world.add_component(e, Collider(radius=10))
 
         if i == 0:
             world.add_component(e, SnakeHead())
             world.add_component(e, Velocity(dx, dy))
+            world.add_component(e, TurnBuffer())
 
-        # skin selection
-        if i == 0:
-            color = Themes.get("snake_head")
-        else:
-            color = Themes.get("snake_body")
-
-        world.add_component(e, RenderRequest(shape="square",
-                                             color=color,
-                                             kind="snake"))
+        if i == 0:              # the body is drawn as a line, see BoardRenderer
+            world.add_component(e, RenderRequest(color_key="snake_head", kind="snake"))
         entities.append(e)
 
     return entities
@@ -131,74 +128,57 @@ def grow_snake_system(world):
 
     new = world.create_entity()
     world.add_component(new, Position(tail_pos.x, tail_pos.y))
-    world.add_component(new, SnakeTag())
     world.add_component(new, SnakeSegment(tail_seg.index + 1))
-    world.add_component(new, Collider(radius=10))
-    world.add_component(new, RenderRequest(shape="square",
-                                           color=Themes.get("snake_body"),
-                                           kind="snake"))
 
-def spawn_food_ecs(world, grid_positions, golden_chance):
-    positions = world.get(Position)
-    snake_tiles = {(p.x, p.y) for p in positions.values()}
+def spawn_food_ecs(world):
+    """Spawn food on a random free tile. Returns None when the board is full."""
+    xs, ys = world.settings.grid_positions()
+    occupied = {(p.x, p.y) for p in world.get(Position).values()}
 
     free_tiles =[(x,y)
-                 for x in grid_positions[0]
-                 for y in grid_positions[1]
-                 if (x,y) not in snake_tiles]
+                 for x in xs
+                 for y in ys
+                 if (x,y) not in occupied]
+    if not free_tiles:
+        return None
 
     x, y = random.choice(free_tiles)
 
-    golden = random.random() < golden_chance
+    golden = random.random() < world.settings.golden_chance()
 
     e = world.create_entity()
     world.add_component(e, Position(x, y))
-    world.add_component(e, Collider(radius=10))
-    world.add_component(e, FoodTag())
     world.add_component(e, Food(golden=golden))
-    base_color =Themes.get("food_gold" if golden else "food")
-    world.add_component(e, RenderRequest(shape="circle",
-                                         color=base_color,
-                                         kind="food"))
+    world.add_component(e, RenderRequest(color_key="food_gold" if golden else "food", kind="food"))
     return e
 
-def spawn_obstacles_ecs(world, obstacle_defs):
-    positions = world.get(Position)
-    occupied = {(p.x, p.y) for p in positions.values()}
+def spawn_obstacles_ecs(world):
+    settings = world.settings
+    occupied = {(p.x, p.y) for p in world.get(Position).values()}
 
-    for obs in obstacle_defs:
-        (x,y) = obs["pos"]
-        w,h = obs["size"]
+    for cells in settings.obstacle_blocks():
+        # One mover per block: every cell shares it, so the block never tears apart
+        mover = None
+        if settings.moving_obstacles():
+            mover = ObstacleMover(random.choice([settings.grid_size, -settings.grid_size]))
 
-        for dx in range(w):
-            for dy in range(h):
-                px = x + dx * Settings.grid_size
-                py = y + dy * Settings.grid_size
+        for px, py in cells:
+            if (px, py) in occupied:
+                continue
 
-                if (px, py) in occupied:
-                    continue
-
-                e = world.create_entity()
-                world.add_component(e, Position(px, py))
-                world.add_component(e, Collider(radius=10))
-                world.add_component(e, Obstacle())
-                world.add_component(e, RenderRequest(shape="square",
-                                                     color=Themes.get("obstacle"),
-                                                     kind="obstacle"))
-
-                if Settings.difficulty == "insane":
-                    step = random.choice([Settings.grid_size, -Settings.grid_size])
-                    world.add_component(e, Velocity(step, 0))
+            e = world.create_entity()
+            world.add_component(e, Position(px, py))
+            world.add_component(e, Obstacle())
+            world.add_component(e, RenderRequest(color_key="obstacle", kind="obstacle"))
+            if mover:
+                world.add_component(e, mover)
 
 
 def spawn_achievement_popup(world, achievement_id):
     cfg = ACHIEVEMENTS[achievement_id]
 
-    Audio.play(cfg["sound"])
+    world.audio.play("achievement")
 
     index = max((p.index for p in world.get(AchievementPopup).values()), default =-1) + 1
-    e = world.create_entity()
-    world.add_component(e, AchievementPopup(achievement_id, index))
-    world.add_component(e, UILabel(cfg["title"], 0, -160 + index * 26))
-    world.add_component(e, UIFade())
-    world.add_component(e, UIStateTag(GameState.PLAYING))
+    e = spawn_label(world, GameState.PLAYING, cfg["title"], 0, layout.POPUP_Y + index * layout.POPUP_STEP)
+    world.add_component(e, AchievementPopup(index, POPUP_SECONDS * 1000))
