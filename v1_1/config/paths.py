@@ -19,3 +19,7 @@ SOUNDS_DIR = resource_path("audio/assets/sounds")
 # Writable data: next to the .exe when built, the repo root in dev
 DATA_DIR = BASE_DIR if FROZEN else BASE_DIR.parent
 HIGHSCORE_FILE = DATA_DIR / "highscore.txt"
+PREFERENCES_FILE = DATA_DIR / "settings.json"
+
+# Window icon: bundled at the root of the build (see Snake.spec), repo root in dev
+ICON_FILE = Path(sys._MEIPASS) / "snake.ico" if hasattr(sys, "_MEIPASS") else BASE_DIR.parent / "snake.ico"
