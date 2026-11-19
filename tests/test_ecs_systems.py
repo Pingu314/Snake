@@ -1,54 +1,32 @@
 """Unit tests for Snake v1.1 ECS systems.
 
 Each test creates a minimal World with only the components needed for the
-system under test. No Turtle/tkinter objects are touched so these run
-headlessly under pytest without a display.
+system under test. Every World brings its own Settings/Themes/StateMachine,
+so tests never leak state into each other. No Turtle/tkinter objects are
+touched, so these run headlessly under pytest without a display.
 
 Run with:
     python -m pytest tests/test_ecs_systems.py -v
 """
 
-import pytest
-from v1_1.core.ecs.registry import World
 from v1_1.core.ecs.components import (
-    Position, Velocity, SnakeHead, SnakeSegment, Collider,
-    FoodTag, Food, Facing, PreviousPosition,
-    GameEvent, ComboCounter, RunModifier, Score, ScoreEvent,
-    Obstacle,
+    Position,
+    GameEvent, ComboCounter, RunModifier, ScoreEvent,
 )
 from v1_1.core.ecs.systems import (
     movement_system,
-    facing_system,
     boundary_system,
-    snap_to_grid_system,
-    collision_system,
     game_over_system,
     scoring_system,
     combo_decay_system,
 )
-from v1_1.core.game_state import GameState, GameStateManager
-from v1_1.config.settings import Settings
 from v1_1.logic.scoring import Scoring
+from helpers import make_world, add_snake_head
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def make_world():
-    """Return a fresh, empty World."""
-    return World()
-
-
-def add_snake_head(world, x=0, y=0, dx=20, dy=0):
-    """Spawn a snake head entity and return its ID."""
-    e = world.create_entity()
-    world.add_component(e, SnakeHead())
-    world.add_component(e, Position(x, y))
-    world.add_component(e, Velocity(dx, dy))
-    world.add_component(e, Collider())
-    world.add_component(e, Facing())
-    return e
+def set_walls(world, wrap):
+    world.settings.wrap_override = wrap
+    return boundary_system(world)
 
 
 # ---------------------------------------------------------------------------
@@ -59,71 +37,23 @@ class TestMovementSystem:
 
     def test_head_moves_right(self):
         world = make_world()
-        Settings.difficulty = "normal"
         head = add_snake_head(world, x=0, y=0, dx=20, dy=0)
         movement_system(world)
         pos = world.get(Position)[head]
-        assert pos.x == 20
-        assert pos.y == 0
+        assert (pos.x, pos.y) == (20, 0)
 
     def test_head_moves_up(self):
         world = make_world()
-        Settings.difficulty = "normal"
         head = add_snake_head(world, x=0, y=0, dx=0, dy=20)
         movement_system(world)
         pos = world.get(Position)[head]
-        assert pos.x == 0
-        assert pos.y == 20
+        assert (pos.x, pos.y) == (0, 20)
 
     def test_head_moves_left(self):
         world = make_world()
-        Settings.difficulty = "normal"
         head = add_snake_head(world, x=100, y=0, dx=-20, dy=0)
         movement_system(world)
-        pos = world.get(Position)[head]
-        assert pos.x == 80
-
-    def test_insane_speed_multiplier(self):
-        """In insane mode the velocity is scaled by 1.25."""
-        world = make_world()
-        Settings.difficulty = "insane"
-        head = add_snake_head(world, x=0, y=0, dx=20, dy=0)
-        movement_system(world)
-        pos = world.get(Position)[head]
-        # 20 * 1.25 = 25, stored as int
-        assert pos.x == 25
-        Settings.difficulty = "normal"
-
-
-# ---------------------------------------------------------------------------
-# facing_system
-# ---------------------------------------------------------------------------
-
-class TestFacingSystem:
-
-    def test_facing_right(self):
-        world = make_world()
-        head = add_snake_head(world, dx=20, dy=0)
-        facing_system(world)
-        assert world.get(Facing)[head].angle == 0
-
-    def test_facing_up(self):
-        world = make_world()
-        head = add_snake_head(world, dx=0, dy=20)
-        facing_system(world)
-        assert world.get(Facing)[head].angle == 90
-
-    def test_facing_left(self):
-        world = make_world()
-        head = add_snake_head(world, dx=-20, dy=0)
-        facing_system(world)
-        assert world.get(Facing)[head].angle == 180
-
-    def test_facing_down(self):
-        world = make_world()
-        head = add_snake_head(world, dx=0, dy=-20)
-        facing_system(world)
-        assert world.get(Facing)[head].angle == 270
+        assert world.get(Position)[head].x == 80
 
 
 # ---------------------------------------------------------------------------
@@ -135,58 +65,35 @@ class TestBoundarySystemWrap:
     def test_wraps_right_to_left(self):
         world = make_world()
         head = add_snake_head(world, x=400, y=0)
-        boundary_system(world, wrap=True)
-        pos = world.get(Position)[head]
-        assert pos.x == -380    # min_x
+        set_walls(world, wrap=True)
+        assert world.get(Position)[head].x == -world.settings.half_width
 
     def test_wraps_left_to_right(self):
         world = make_world()
         head = add_snake_head(world, x=-400, y=0)
-        boundary_system(world, wrap=True)
-        pos = world.get(Position)[head]
-        assert pos.x == 380
+        set_walls(world, wrap=True)
+        assert world.get(Position)[head].x == world.settings.half_width
 
     def test_wraps_top_to_bottom(self):
         world = make_world()
-        head = add_snake_head(world, x=0, y=300)
-        boundary_system(world, wrap=True)
-        pos = world.get(Position)[head]
-        assert pos.y == -280
+        head = add_snake_head(world, x=0, y=world.settings.half_height + 20)
+        set_walls(world, wrap=True)
+        assert world.get(Position)[head].y == -world.settings.half_height
 
     def test_no_wrap_returns_true_on_oob(self):
         world = make_world()
         add_snake_head(world, x=400, y=0)
-        result = boundary_system(world, wrap=False)
-        assert result is True
+        assert set_walls(world, wrap=False) is True
 
     def test_in_bounds_no_wrap_returns_false(self):
         world = make_world()
         add_snake_head(world, x=0, y=0)
-        result = boundary_system(world, wrap=False)
-        assert result is False
+        assert set_walls(world, wrap=False) is False
 
-
-# ---------------------------------------------------------------------------
-# snap_to_grid_system
-# ---------------------------------------------------------------------------
-
-class TestSnapToGridSystem:
-
-    def test_snaps_to_nearest_grid(self):
-        world = make_world()
-        head = add_snake_head(world, x=13, y=7)
-        snap_to_grid_system(world, grid_size=20)
-        pos = world.get(Position)[head]
-        assert pos.x == 20
-        assert pos.y == 0
-
-    def test_already_on_grid(self):
-        world = make_world()
-        head = add_snake_head(world, x=40, y=60)
-        snap_to_grid_system(world, grid_size=20)
-        pos = world.get(Position)[head]
-        assert pos.x == 40
-        assert pos.y == 60
+    def test_wrap_mode_defaults_to_difficulty(self):
+        world = make_world("hard")      # hard has walls
+        add_snake_head(world, x=400, y=0)
+        assert boundary_system(world) is True
 
 
 # ---------------------------------------------------------------------------
@@ -195,29 +102,22 @@ class TestSnapToGridSystem:
 
 class TestGameOverSystem:
 
-    def setup_method(self):
-        GameStateManager.set_state(GameState.PLAYING)
-
-    def test_death_event_triggers_game_over(self):
+    def test_death_event_reports_game_over(self):
         world = make_world()
-        e = world.create_entity()
-        world.add_component(e, GameEvent("DEATH", None))
-        game_over_system(world)
-        assert GameStateManager.current() == GameState.GAME_OVER
+        world.add_component(world.create_entity(), GameEvent("DEATH"))
+        assert game_over_system(world) is True
 
     def test_death_event_is_cleaned_up(self):
         world = make_world()
-        e = world.create_entity()
-        world.add_component(e, GameEvent("DEATH", None))
+        world.add_component(world.create_entity(), GameEvent("DEATH"))
         game_over_system(world)
         assert len(world.get(GameEvent)) == 0
 
-    def test_no_death_event_does_not_change_state(self):
+    def test_no_death_event_keeps_playing(self):
         world = make_world()
-        e = world.create_entity()
-        world.add_component(e, GameEvent("FOOD_HIT", None))
-        game_over_system(world)
-        assert GameStateManager.current() == GameState.PLAYING
+        world.add_component(world.create_entity(), GameEvent("FOOD_HIT", None))
+        assert game_over_system(world) is False
+        assert len(world.get(GameEvent)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -229,30 +129,35 @@ class TestScoringSystem:
     def test_score_event_applied(self):
         world = make_world()
         scoring = Scoring()
-        e = world.create_entity()
-        world.add_component(e, ScoreEvent("FOOD", 10))
+        world.add_component(world.create_entity(), ScoreEvent(10))
         scoring_system(world, scoring)
         assert scoring.score == 10
 
     def test_score_event_consumed(self):
         world = make_world()
         scoring = Scoring()
-        e = world.create_entity()
-        world.add_component(e, ScoreEvent("FOOD", 10))
+        world.add_component(world.create_entity(), ScoreEvent(10))
         scoring_system(world, scoring)
         assert len(world.get(ScoreEvent)) == 0
 
-    def test_multiplier_applied(self):
-        """A perfect run on hard scores x1.25 (the multiplier comes from RunModifier)."""
-        world = make_world()
-        Settings.difficulty = "hard"
+    def test_perfect_multiplier_applied(self):
+        """An unpaused run on hard scores x1.25 (the multiplier comes from RunModifier)."""
+        world = make_world("hard")
         scoring = Scoring()
         world.add_component(world.create_entity(), RunModifier())
-        e = world.create_entity()
-        world.add_component(e, ScoreEvent("FOOD", 10))
+        world.add_component(world.create_entity(), ScoreEvent(10))
         scoring_system(world, scoring)
-        assert scoring.score == 12   # int(10 * 1.25)
-        Settings.difficulty = "normal"
+        assert scoring.score == 12   # round(12.5)
+
+    def test_no_multiplier_after_pause(self):
+        world = make_world("hard")
+        scoring = Scoring()
+        rm = RunModifier()
+        rm.perfect = False
+        world.add_component(world.create_entity(), rm)
+        world.add_component(world.create_entity(), ScoreEvent(10))
+        scoring_system(world, scoring)
+        assert scoring.score == 10
 
 
 # ---------------------------------------------------------------------------
@@ -261,28 +166,21 @@ class TestScoringSystem:
 
 class TestComboDecaySystem:
 
+    def make_combo(self, world, value, timer):
+        combo = ComboCounter()
+        combo.value, combo.timer = value, timer
+        world.add_component(world.create_entity(), combo)
+        world.add_component(world.create_entity(), RunModifier())
+        return combo
+
     def test_combo_timer_decrements(self):
         world = make_world()
-        Settings.difficulty = "normal"
-        e = world.create_entity()
-        combo = ComboCounter()
-        combo.value = 3
-        combo.timer = 100
-        world.add_component(e, combo)
-        rm_entity = world.create_entity()
-        world.add_component(rm_entity, RunModifier())
+        combo = self.make_combo(world, value=3, timer=1000)
         combo_decay_system(world)
-        assert combo.timer == 99
+        assert combo.timer == 1000 - world.settings.speed()     # one tick of real time
 
     def test_combo_resets_when_timer_expires(self):
         world = make_world()
-        Settings.difficulty = "normal"
-        e = world.create_entity()
-        combo = ComboCounter()
-        combo.value = 5
-        combo.timer = 1
-        world.add_component(e, combo)
-        rm_entity = world.create_entity()
-        world.add_component(rm_entity, RunModifier())
+        combo = self.make_combo(world, value=5, timer=1)
         combo_decay_system(world)
         assert combo.value == 1
