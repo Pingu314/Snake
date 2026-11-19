@@ -1,7 +1,7 @@
 __pycache__/
 dist/
 build/
-sounds/
+/sounds/
 .idea/
 .venv/
 v1_0/
@@ -9,6 +9,6 @@ v1_0_1/
 v1.1/
 recovered_v1.1.py
 highscore.txt
-*.spec
+settings.json
 *.exe
 *.pyc

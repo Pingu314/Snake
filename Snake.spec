@@ -30,4 +30,5 @@ exe = EXE(
     upx=True,
     console=False,
     icon='snake.ico',
+    version='version_info.txt',
 )
